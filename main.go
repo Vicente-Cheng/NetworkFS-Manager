@@ -141,7 +141,7 @@ func run(opt *utils.Option) error {
 		<-ctx.Done()
 	}
 
-	leader.RunOrDie(ctx, opt.Namespace, "harvester-network-fs-manager", client, cb)
+	leader.RunOrDie(ctx, opt.Namespace, "harvester-networkfs-manager", client, cb)
 
 	logrus.Infof("NetworkFS manager is shutting down")
 	return nil

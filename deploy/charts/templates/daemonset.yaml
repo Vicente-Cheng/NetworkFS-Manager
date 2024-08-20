@@ -1,14 +1,14 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: {{ include "harvester-network-fs-manager.name" . }}
+  name: {{ include "harvester-networkfs-manager.name" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "harvester-network-fs-manager.labels" . | nindent 4 }}
+    {{- include "harvester-networkfs-manager.labels" . | nindent 4 }}
 spec:
   selector:
     matchLabels:
-      {{- include "harvester-network-fs-manager.selectorLabels" . | nindent 6 }}
+      {{- include "harvester-networkfs-manager.selectorLabels" . | nindent 6 }}
   template:
     metadata:
     {{- with .Values.podAnnotations }}
@@ -16,20 +16,20 @@ spec:
         {{- toYaml . | nindent 8 }}
     {{- end }}
       labels:
-        {{- include "harvester-network-fs-manager.selectorLabels" . | nindent 8 }}
+        {{- include "harvester-networkfs-manager.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "harvester-network-fs-manager.name" . }}
+      serviceAccountName: {{ include "harvester-networkfs-manager.name" . }}
       hostNetwork: true
       containers:
       - name: {{ .Chart.Name }}
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         command:
-        - network-fs-manager
+        - networkfs-manager
         {{- if .Values.debug }}
         - "--debug"
         {{- end }}
