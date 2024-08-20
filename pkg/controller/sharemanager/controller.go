@@ -92,7 +92,6 @@ func (c *Controller) OnShareManagerChange(_ string, sharemanager *longhornv1.Sha
 	networkFSCpy.Status.NetworkFSConds = utils.UpdateNetworkFSConds(networkFSCpy.Status.NetworkFSConds, conds)
 
 	if !reflect.DeepEqual(networkFS, networkFSCpy) {
-		logrus.Infof("Prepare to update networkfilesystem %+v", networkFSCpy)
 		if _, err := c.NetworkFilsystems.UpdateStatus(networkFSCpy); err != nil {
 			logrus.Errorf("Failed to update networkFS %s: %v", networkFS.Name, err)
 			return nil, err

@@ -47,7 +47,6 @@ func Register(ctx context.Context, coreClient ctlv1.Interface, lhClient *lhclien
 	}
 
 	c.NetworkFilsystems.OnChange(ctx, netFSHandlerName, c.OnNetworkFSChange)
-	c.NetworkFilsystems.OnRemove(ctx, netFSHandlerName, c.OnNetworkFSDelete)
 	return nil
 }
 
@@ -72,16 +71,6 @@ func (c *Controller) OnNetworkFSChange(_ string, networkFS *networkfsv1.NetworkF
 	default:
 		logrus.Errorf("Unknown desired state %s for network filesystem %s", networkFS.Spec.DesiredState, networkFS.Name)
 	}
-
-	return nil, nil
-}
-
-func (c *Controller) OnNetworkFSDelete(_ string, networkFS *networkfsv1.NetworkFilesystem) (*networkfsv1.NetworkFilesystem, error) {
-	if networkFS == nil || networkFS.DeletionTimestamp != nil {
-		logrus.Infof("Skip this round because the network filesystem %s is deleting", networkFS.Name)
-		return nil, nil
-	}
-	logrus.Infof("Handling network filesystem %s delete event", networkFS.Name)
 
 	return nil, nil
 }
@@ -157,7 +146,6 @@ func (c *Controller) enableNetworkFS(networkFS *networkfsv1.NetworkFilesystem) (
 		Message:            "Endpoint contains the corresponding address",
 	}
 	networkFSCpy.Status.NetworkFSConds = utils.UpdateNetworkFSConds(networkFSCpy.Status.NetworkFSConds, conds)
-	logrus.Infof("Prepare to update networkfilesystem %+v", networkFSCpy)
 	return c.NetworkFilsystems.UpdateStatus(networkFSCpy)
 }
 
@@ -175,52 +163,6 @@ func (c *Controller) updateLHVolumeAttachment(networkFS *networkfsv1.NetworkFile
 		return c.doAttachLHVolumeAttachment(networkFS, lhva)
 	}
 	return c.doDeattachLHVolumeAttachment(networkFS, lhva)
-	//lhvaCpy := lhva.DeepCopy()
-	//lhvaCpy.Spec.AttachmentTickets = map[string]*longhornv2.AttachmentTicket{}
-	//nodeID := ""
-	//if networkFS.Spec.PreferredNode != "" {
-	//	nodeID = networkFS.Spec.PreferredNode
-	//}
-	//csiTicketID := fmt.Sprintf("csi-%s", networkFS.Name)
-	//shareMgrTicketID := fmt.Sprintf("share-manager-controller-%s", networkFS.Name)
-
-	//// RWX volume should have two attachment tickets (CSI and share-manager)
-	//attachmentTicketCSI, ok := lhva.Spec.AttachmentTickets[csiTicketID]
-	//if !ok {
-	//	// Create new one
-	//	attachmentTicketCSI = &longhornv2.AttachmentTicket{
-	//		ID:     csiTicketID,
-	//		Type:   longhornv2.AttacherTypeCSIAttacher,
-	//		NodeID: nodeID,
-	//		Parameters: map[string]string{
-	//			longhornv2.AttachmentParameterDisableFrontend: "false",
-	//		},
-	//	}
-	//}
-	//lhvaCpy.Spec.AttachmentTickets[csiTicketID] = attachmentTicketCSI
-
-	//attachmentTicketSM, ok := lhva.Spec.AttachmentTickets[shareMgrTicketID]
-	//if !ok {
-	//	// Create new one
-	//	attachmentTicketSM = &longhornv2.AttachmentTicket{
-	//		ID:     shareMgrTicketID,
-	//		Type:   longhornv2.AttacherTypeShareManagerController,
-	//		NodeID: nodeID,
-	//		Parameters: map[string]string{
-	//			longhornv2.AttachmentParameterDisableFrontend: "false",
-	//		},
-	//	}
-	//}
-	//lhvaCpy.Spec.AttachmentTickets[shareMgrTicketID] = attachmentTicketSM
-
-	//if !reflect.DeepEqual(lhva, lhvaCpy) {
-	//	if _, err := c.lhClient.LonghornV1beta2().VolumeAttachments(utils.LHNameSpace).Update(context.Background(), lhvaCpy, metav1.UpdateOptions{}); err != nil {
-	//		logrus.Errorf("Failed to update Longhorn volume attachment %s: %v", networkFS.Name, err)
-	//		return err
-	//	}
-	//}
-
-	//return nil
 }
 
 func (c *Controller) doDeattachLHVolumeAttachment(networkFS *networkfsv1.NetworkFilesystem, lhva *longhornv2.VolumeAttachment) error {

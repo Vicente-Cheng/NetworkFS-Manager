@@ -114,7 +114,6 @@ func (c *Controller) OnEndpointChange(_ string, endpoint *corev1.Endpoints) (*co
 	}
 
 	if !reflect.DeepEqual(networkFS, networkFSCpy) {
-		logrus.Infof("Prepare to update networkfilesystem %+v", networkFSCpy)
 		if _, err := c.NetworkFilsystems.UpdateStatus(networkFSCpy); err != nil {
 			logrus.Errorf("Failed to update networkFS %s: %v", networkFS.Name, err)
 			return nil, err
