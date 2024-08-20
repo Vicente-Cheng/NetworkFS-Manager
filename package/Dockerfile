@@ -15,5 +15,5 @@ RUN if [ "$TARGETPLATFORM" != "linux/amd64" ] && [ "$TARGETPLATFORM" != "linux/a
 
 ENV ARCH=${TARGETPLATFORM#linux/}
 
-COPY bin/network-fs-manager-${ARCH} /usr/bin/network-fs-manager
-CMD ["network-fs-manager"]
+COPY bin/networkfs-manager-${ARCH} /usr/bin/networkfs-manager
+CMD ["networkfs-manager"]
