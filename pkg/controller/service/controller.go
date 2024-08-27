@@ -1,4 +1,4 @@
-package endpoint
+package service
 
 import (
 	"context"
@@ -19,51 +19,48 @@ type Controller struct {
 	namespace string
 	nodeName  string
 
-	EndpointCache     ctlcorev1.EndpointsCache
-	Endpoints         ctlcorev1.EndpointsController
+	ServiceCache      ctlcorev1.ServiceCache
+	Services          ctlcorev1.ServiceController
 	NetworkFSCache    ctlntefsv1.NetworkFilesystemCache
 	NetworkFilsystems ctlntefsv1.NetworkFilesystemController
-
-	serviceClient ctlcorev1.ServiceController
 }
 
 const (
-	netFSEndpointHandlerName = "harvester-netfs-endpoint-handler"
+	netFSEndpointHandlerName = "harvester-netfs-service-handler"
 )
 
 // Register register the longhorn node CRD controller
-func Register(ctx context.Context, endpoint ctlcorev1.EndpointsController, netfilesystems ctlntefsv1.NetworkFilesystemController, serviceClient ctlcorev1.ServiceController, opt *utils.Option) error {
+func Register(ctx context.Context, services ctlcorev1.ServiceController, netfilesystems ctlntefsv1.NetworkFilesystemController, opt *utils.Option) error {
 
 	c := &Controller{
 		namespace:         opt.Namespace,
 		nodeName:          opt.NodeName,
-		Endpoints:         endpoint,
-		EndpointCache:     endpoint.Cache(),
+		Services:          services,
+		ServiceCache:      services.Cache(),
 		NetworkFilsystems: netfilesystems,
 		NetworkFSCache:    netfilesystems.Cache(),
-		serviceClient:     serviceClient,
 	}
 
-	c.Endpoints.OnChange(ctx, netFSEndpointHandlerName, c.OnEndpointChange)
+	c.Services.OnChange(ctx, netFSEndpointHandlerName, c.OnServicesChange)
 	return nil
 }
 
-// OnChange watch the node CR on change and sync up to block device CR
-func (c *Controller) OnEndpointChange(_ string, endpoint *corev1.Endpoints) (*corev1.Endpoints, error) {
-	if endpoint == nil || endpoint.DeletionTimestamp != nil {
-		logrus.Infof("Skip this round because endpoint is deleted or deleting")
+// OnServicesChange watch the services CR on change and sync up to networkfilesystem CR
+func (c *Controller) OnServicesChange(_ string, service *corev1.Service) (*corev1.Service, error) {
+	if service == nil || service.DeletionTimestamp != nil {
+		logrus.Infof("Skip this round because service is deleted or deleting")
 		return nil, nil
 	}
 
 	// we only care about the endpoint with name prefix "pvc-"
-	if !strings.HasPrefix(endpoint.Name, "pvc-") {
+	if !strings.HasPrefix(service.Name, "pvc-") {
 		return nil, nil
 	}
 
-	logrus.Infof("Handling endpoint %s change event", endpoint.Name)
-	networkFS, err := c.NetworkFilsystems.Get(c.namespace, endpoint.Name, metav1.GetOptions{})
+	logrus.Infof("Handling service %s change event", service.Name)
+	networkFS, err := c.NetworkFilsystems.Get(c.namespace, service.Name, metav1.GetOptions{})
 	if err != nil {
-		logrus.Errorf("Failed to get networkFS %s: %v", endpoint.Name, err)
+		logrus.Errorf("Failed to get networkFS %s: %v", service.Name, err)
 		return nil, err
 	}
 
@@ -73,19 +70,13 @@ func (c *Controller) OnEndpointChange(_ string, endpoint *corev1.Endpoints) (*co
 		return nil, nil
 	}
 
-	// skip update if the service.Spec.ClusterIP is not ClusterIPNone (means the we depends on service)
-	service, err := c.serviceClient.Get(utils.LHNameSpace, endpoint.Name, metav1.GetOptions{})
-	if err != nil {
-		logrus.Errorf("Failed to get service %s: %v", endpoint.Name, err)
-		return nil, err
-	}
-	if service.Spec.ClusterIP != corev1.ClusterIPNone {
-		logrus.Infof("Skip update with endpoint change event because service %s is not ClusterIPNone", service.Name)
+	// means we depends on the endpoint, skip the update
+	if service.Spec.ClusterIP == corev1.ClusterIPNone {
 		return nil, nil
 	}
-
 	networkFSCpy := networkFS.DeepCopy()
-	if len(endpoint.Subsets) == 0 || len(endpoint.Subsets[0].Addresses) == 0 {
+	// Not updated, skip the update (we will get a new service CR later)
+	if service.Spec.ClusterIP == "" {
 		networkFSCpy.Status.Endpoint = ""
 		networkFSCpy.Status.Status = networkfsv1.EndpointStatusNotReady
 		networkFSCpy.Status.Type = networkfsv1.NetworkFSTypeNFS
@@ -94,14 +85,14 @@ func (c *Controller) OnEndpointChange(_ string, endpoint *corev1.Endpoints) (*co
 			Type:               networkfsv1.ConditionTypeNotReady,
 			Status:             corev1.ConditionTrue,
 			LastTransitionTime: metav1.Now(),
-			Reason:             "Endpoint is not ready",
-			Message:            "Endpoint did not contain the corresponding address",
+			Reason:             "Service is not ready",
+			Message:            "Service did not contain the corresponding address",
 		}
 		networkFSCpy.Status.NetworkFSConds = utils.UpdateNetworkFSConds(networkFSCpy.Status.NetworkFSConds, conds)
 	} else {
-		if networkFSCpy.Status.Endpoint != endpoint.Subsets[0].Addresses[0].IP {
-			changedMsg := "Endpoint address is initialized with " + endpoint.Subsets[0].Addresses[0].IP
-			if changedMsg != "" {
+		if networkFSCpy.Status.Endpoint != service.Spec.ClusterIP {
+			changedMsg := "Endpoint address is initialized with " + service.Spec.ClusterIP
+			if networkFSCpy.Status.Endpoint != "" {
 				changedMsg = "Endpoint address is changed, previous address is " + networkFSCpy.Status.Endpoint
 			}
 			conds := networkfsv1.NetworkFSCondition{
@@ -113,7 +104,7 @@ func (c *Controller) OnEndpointChange(_ string, endpoint *corev1.Endpoints) (*co
 			}
 			networkFSCpy.Status.NetworkFSConds = utils.UpdateNetworkFSConds(networkFSCpy.Status.NetworkFSConds, conds)
 		}
-		networkFSCpy.Status.Endpoint = endpoint.Subsets[0].Addresses[0].IP
+		networkFSCpy.Status.Endpoint = service.Spec.ClusterIP
 		networkFSCpy.Status.Status = networkfsv1.EndpointStatusReady
 		networkFSCpy.Status.Type = networkfsv1.NetworkFSTypeNFS
 		networkFSCpy.Status.State = networkfsv1.NetworkFSStateEnabling

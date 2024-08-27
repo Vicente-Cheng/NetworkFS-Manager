@@ -60,9 +60,13 @@ func (c *Controller) OnShareManagerChange(_ string, sharemanager *longhornv1.Sha
 
 	logrus.Infof("Handling sharemanager %s change event", sharemanager.Name)
 	networkFS, err := c.NetworkFilsystems.Get(c.namespace, sharemanager.Name, metav1.GetOptions{})
-	if err != nil && apierrors.IsNotFound(err) {
+	if err != nil && !apierrors.IsNotFound(err) {
 		logrus.Errorf("Failed to get networkFS %s: %v", sharemanager.Name, err)
 		return nil, err
+	}
+	if apierrors.IsNotFound(err) {
+		logrus.Infof("Skip update with sharemanager change event because there is no corresponding NetworkFS %v", sharemanager.Name)
+		return nil, nil
 	}
 
 	// already disabled, return

@@ -52,7 +52,7 @@ func Register(ctx context.Context, coreClient ctlv1.Interface, lhClient *lhclien
 
 func (c *Controller) OnNetworkFSChange(_ string, networkFS *networkfsv1.NetworkFilesystem) (*networkfsv1.NetworkFilesystem, error) {
 	if networkFS == nil || networkFS.DeletionTimestamp != nil {
-		logrus.Infof("Skip this round because the network filesystem %s is deleting", networkFS.Name)
+		logrus.Infof("Skip this round because the network filesystem is deleting")
 		return nil, nil
 	}
 	logrus.Infof("Handling network filesystem %s change event", networkFS.Name)
@@ -60,6 +60,19 @@ func (c *Controller) OnNetworkFSChange(_ string, networkFS *networkfsv1.NetworkF
 	if networkFS.Spec.DesiredState == networkFS.Status.State {
 		logrus.Infof("Skip this round because the network filesystem %s is already in desired state %s", networkFS.Name, networkFS.Spec.DesiredState)
 		return nil, nil
+	}
+
+	if networkFS.Status.State == "" {
+		// means empty Status, init first
+		logrus.Infof("Init network filesystem %s status", networkFS.Name)
+		networkFSCpy := networkFS.DeepCopy()
+		status := networkfsv1.NetworkFSStatus{
+			State:  networkfsv1.NetworkFSStateUnknown,
+			Status: networkfsv1.EndpointStatusUnknown,
+			Type:   networkfsv1.NetworkFSTypeNFS,
+		}
+		networkFSCpy.Status = status
+		return c.NetworkFilsystems.UpdateStatus(networkFSCpy)
 	}
 
 	// Disabled -> Enabling -> Enabled -> Disabling -> Disabled
@@ -94,13 +107,19 @@ func (c *Controller) disableNetworkFS(networkFS *networkfsv1.NetworkFilesystem) 
 func (c *Controller) enableNetworkFS(networkFS *networkfsv1.NetworkFilesystem) (*networkfsv1.NetworkFilesystem, error) {
 	logrus.Infof("Enable network filesystem %s", networkFS.Name)
 
-	// check endpoint status first
-	endpoint, err := c.endpointsClient.Get(utils.LHNameSpace, networkFS.Name, metav1.GetOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		logrus.Errorf("Failed to get endpoint %s: %v", networkFS.Name, err)
+	// After update the LH volume attachment, we need to wait LH share manager provision.
+	lhShareMgr, err := c.lhClient.LonghornV1beta2().ShareManagers(utils.LHNameSpace).Get(context.Background(), networkFS.Name, metav1.GetOptions{})
+	if err != nil {
+		logrus.Errorf("Failed to get share manager %s: %v", networkFS.Name, err)
 		return nil, err
 	}
-	if !isEnabling(networkFS) || errors.IsNotFound(err) || endpoint.Subsets == nil || len(endpoint.Subsets) == 0 || len(endpoint.Subsets[0].Addresses) == 0 {
+
+	if !isEnabling(networkFS) && lhShareMgr.Status.State == longhornv2.ShareManagerStateStopped {
+		// enable the network filesystem need to wait the previous operation (disable) to finish
+		if networkFS.Status.State != networkfsv1.NetworkFSStateDisabled {
+			logrus.Infof("Wait the previous operation (disable) to finish")
+			return nil, fmt.Errorf("wait the previous operation (disable) to finish on %v", networkFS.Name)
+		}
 		logrus.Infof("Endpoint %s is not ready, update lhVA to trigger export endpoint", networkFS.Name)
 		if err := c.updateLHVolumeAttachment(networkFS, true); err != nil {
 			return nil, err
@@ -114,12 +133,42 @@ func (c *Controller) enableNetworkFS(networkFS *networkfsv1.NetworkFilesystem) (
 		}
 	}
 
-	// LH RWX volume endpoint should only have one address and one port
-	if len(endpoint.Subsets) > 1 || len(endpoint.Subsets[0].Addresses) > 1 || len(endpoint.Subsets[0].Ports) > 1 {
-		return nil, fmt.Errorf("endpoint %s has more than one subSets", networkFS.Name)
+	if lhShareMgr.Status.State != longhornv2.ShareManagerStateRunning {
+		logrus.Infof("Wait the share manager %s to be running", networkFS.Name)
+		return nil, fmt.Errorf("wait the share manager %s to be running", networkFS.Name)
 	}
-	if endpoint.Subsets[0].Ports[0].Name != "nfs" {
-		return nil, fmt.Errorf("endpoint %s has no nfs port", networkFS.Name)
+
+	// LH RWX volume endpoint should only have one address and one port
+	service, err := c.coreClient.Service().Get(utils.LHNameSpace, networkFS.Name, metav1.GetOptions{})
+	if err != nil {
+		logrus.Errorf("Failed to get service %s: %v", networkFS.Name, err)
+		return nil, err
+	}
+	networkFSCpy := networkFS.DeepCopy()
+	if service.Spec.ClusterIP != corev1.ClusterIPNone {
+		// means we depends on the service
+		if service.Spec.ClusterIP == "" {
+			// first init, service controller will update
+			logrus.Infof("Skip update on networkfs controller with the first time service init")
+			return nil, nil
+		}
+		networkFSCpy.Status.Endpoint = service.Spec.ClusterIP
+	} else {
+		endpoint, err := c.endpointsClient.Get(utils.LHNameSpace, networkFS.Name, metav1.GetOptions{})
+		if err != nil && !errors.IsNotFound(err) {
+			logrus.Errorf("Failed to get endpoint %s: %v", networkFS.Name, err)
+		}
+		if len(endpoint.Subsets) == 0 {
+			logrus.Infof("Endpoint %s has no subsets (not ready), skip this round!", networkFS.Name)
+			return nil, nil
+		}
+		if len(endpoint.Subsets) > 1 || len(endpoint.Subsets[0].Addresses) > 1 || len(endpoint.Subsets[0].Ports) > 1 {
+			return nil, fmt.Errorf("endpoint %s has more than one subSets", networkFS.Name)
+		}
+		if endpoint.Subsets[0].Ports[0].Name != "nfs" {
+			return nil, fmt.Errorf("endpoint %s has no nfs port", networkFS.Name)
+		}
+		networkFSCpy.Status.Endpoint = endpoint.Subsets[0].Addresses[0].IP
 	}
 
 	pv, err := c.coreClient.PersistentVolume().Get(networkFS.Name, metav1.GetOptions{})
@@ -132,8 +181,6 @@ func (c *Controller) enableNetworkFS(networkFS *networkfsv1.NetworkFilesystem) (
 		opts = pv.Spec.CSI.VolumeAttributes["nfsOptions"]
 	}
 	// update network filesystem status
-	networkFSCpy := networkFS.DeepCopy()
-	networkFSCpy.Status.Endpoint = endpoint.Subsets[0].Addresses[0].IP
 	networkFSCpy.Status.State = networkfsv1.NetworkFSStateEnabled
 	networkFSCpy.Status.Type = networkfsv1.NetworkFSTypeNFS
 	networkFSCpy.Status.Status = networkfsv1.EndpointStatusReady

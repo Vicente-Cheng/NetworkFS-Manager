@@ -23,6 +23,7 @@ import (
 
 	"github.com/harvester/networkfs-manager/pkg/controller/endpoint"
 	"github.com/harvester/networkfs-manager/pkg/controller/networkfilesystem"
+	"github.com/harvester/networkfs-manager/pkg/controller/service"
 	"github.com/harvester/networkfs-manager/pkg/controller/sharemanager"
 	ntefsv1 "github.com/harvester/networkfs-manager/pkg/generated/controllers/harvesterhci.io"
 	ctrllonghorn "github.com/harvester/networkfs-manager/pkg/generated/controllers/longhorn.io"
@@ -118,12 +119,17 @@ func run(opt *utils.Option) error {
 	}
 
 	endpoints := clientv1.Core().V1().Endpoints()
+	services := clientv1.Core().V1().Service()
 	networkFilsystems := clientNetfs.Harvesterhci().V1beta1().NetworkFilesystem()
 	sharemanagers := lhCtrlClient.Longhorn().V1beta2().ShareManager()
 
 	cb := func(ctx context.Context) {
-		if err := endpoint.Register(ctx, endpoints, networkFilsystems, opt); err != nil {
+		if err := endpoint.Register(ctx, endpoints, networkFilsystems, services, opt); err != nil {
 			logrus.Errorf("failed to register endpoint controller: %v", err)
+		}
+
+		if err := service.Register(ctx, services, networkFilsystems, opt); err != nil {
+			logrus.Errorf("failed to register service controller: %v", err)
 		}
 
 		if err := networkfilesystem.Register(ctx, clientv1.Core().V1(), lhClient, endpoints, networkFilsystems, opt); err != nil {
