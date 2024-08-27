@@ -66,6 +66,9 @@ spec:
               perferredNodes:
                 description: perferred nodes to which the networkFS endpoint is exported
                 type: string
+              provisioner:
+                description: the provider of this networkfilesystem
+                type: string
             required:
             - desiredState
             - networkFSName

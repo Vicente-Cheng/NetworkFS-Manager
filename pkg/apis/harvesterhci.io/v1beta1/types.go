@@ -72,6 +72,10 @@ type NetworkFSSpec struct {
 	// perferred nodes to which the networkFS endpoint is exported
 	// +kubebuilder:validation:Optional
 	PreferredNode string `json:"perferredNodes,omitempty"`
+
+	// the provider of this networkfilesystem
+	// +kubebuilder:validation:Optional
+	Provisioner string `json:"provisioner,omitempty"`
 }
 
 type NetworkFSStatus struct {
