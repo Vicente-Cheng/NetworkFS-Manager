@@ -67,7 +67,7 @@ func (c *Controller) OnNetworkFSChange(_ string, networkFS *networkfsv1.NetworkF
 		logrus.Infof("Init network filesystem %s status", networkFS.Name)
 		networkFSCpy := networkFS.DeepCopy()
 		status := networkfsv1.NetworkFSStatus{
-			State:  networkfsv1.NetworkFSStateUnknown,
+			State:  networkfsv1.NetworkFSStateDisabled,
 			Status: networkfsv1.EndpointStatusUnknown,
 			Type:   networkfsv1.NetworkFSTypeNFS,
 		}
